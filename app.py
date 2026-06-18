@@ -131,37 +131,83 @@ def refill():
     flash("Balance Refilled")
     return redirect("/dashboard")
 
-
-@app.route("/pay-salary", methods=["POST"])
+@app.route(
+    "/pay-salary",
+    methods=["POST"]
+)
 @login_required
 def pay_salary():
-    employee_id = int(request.form.get("employee_id"))
-    amount = float(request.form.get("amount"))
 
-    admin = Admin.query.first()
-    employee = Employee.query.get(employee_id)
-
-    if amount > admin.balance:
-        flash("Insufficient System Balance")
-        return redirect("/dashboard")
-
-    admin.balance -= amount
-    employee.balance += amount
-
-    tx = Transaction(
-        employee_id=employee.id,
-        tx_type="SALARY",
-        amount=amount,
-        status="SUCCESS",
-        description="Salary Payment"
+    employee_id = int(
+        request.form.get(
+            "employee_id"
+        )
     )
 
-    db.session.add(tx)
-    db.session.commit()
+    amount = float(
+        request.form.get(
+            "amount"
+        )
+    )
 
-    flash("Salary Paid")
-    return redirect("/dashboard")
+    admin = Admin.query.first()
 
+    employee = Employee.query.get(
+        employee_id
+    )
+
+    if amount > admin.balance:
+
+        flash(
+            "Insufficient System Balance"
+        )
+
+        return redirect(
+            "/dashboard"
+        )
+
+    # 1. Trigger the real Africa's Talking payment via your mobile money service
+    success, response = send_money(
+        employee.phone,
+        amount
+    )
+
+    # 2. Only update the database if the Africa's Talking API call succeeded
+    if success:
+
+        admin.balance -= amount
+
+        # Note: We do not add to employee.balance here because they 
+        # received real cash on their mobile phone instead of virtual app credit.
+
+        tx = Transaction(
+            employee_id=employee.id,
+            tx_type="SALARY",
+            amount=amount,
+            status="SUCCESS",
+            description="Salary Payout via Africa's Talking"
+        )
+
+        db.session.add(
+            tx
+        )
+
+        db.session.commit()
+
+        flash(
+            "Salary Paid via Africa's Talking"
+        )
+
+    else:
+
+        # If Africa's Talking fails (e.g. invalid phone number, insufficient API funds)
+        flash(
+            f"Payment Failed: {str(response)}"
+        )
+
+    return redirect(
+        "/dashboard"
+    )
 
 @app.route("/approve/<int:req_id>")
 @login_required
