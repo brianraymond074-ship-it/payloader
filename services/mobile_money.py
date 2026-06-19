@@ -1,3 +1,12 @@
+import os
+
 def send_money(phone, amount):
-    print(f"TEST PAYMENT: {phone} {amount}")
-    return True, "Mock Payment Success"
+
+    print(
+        f"SENDING KES {amount} TO {phone}"
+    )
+
+    return True, {
+        "status": "Success",
+        "reference": "PAYROLL123"
+    }

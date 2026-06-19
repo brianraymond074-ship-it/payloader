@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>History</title>
+</head>
+<body>
+
+<h1>Transaction History</h1>
+
+<table border="1">
+
+<tr>
+<th>ID</th>
+<th>Type</th>
+<th>Amount</th>
+<th>Status</th>
+<th>Date</th>
+</tr>
+
+{% for tx in transactions %}
+
+<tr>
+
+<td>{{ tx.id }}</td>
+
+<td>{{ tx.tx_type }}</td>
+
+<td>{{ tx.amount }}</td>
+
+<td>{{ tx.status }}</td>
+
+<td>{{ tx.created_at }}</td>
+
+</tr>
+
+{% endfor %}
+
+</table>
+
+</body>
+</html>

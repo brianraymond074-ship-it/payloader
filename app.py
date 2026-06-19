@@ -1,5 +1,10 @@
-import os
-from flask import Flask, render_template, request, redirect, flash
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    flash
+)
 
 from flask_login import (
     LoginManager,
@@ -19,117 +24,143 @@ from models import (
     db,
     Admin,
     Employee,
-    Transaction,
-    WithdrawalRequest
+    Transaction
 )
-
-from routes.ussd import ussd_bp
 
 from services.mobile_money import (
     send_money
 )
 
-# Initialize Flask and force absolute path for templates folder to prevent Windows errors
-base_dir = os.path.abspath(os.path.dirname(__file__))
-app = Flask(__name__, template_folder=os.path.join(base_dir, 'templates'))
+import os
+
+
+app = Flask(__name__)
 
 app.config.from_object(Config)
 
 db.init_app(app)
 
-app.register_blueprint(ussd_bp)
-
 login_manager = LoginManager()
+
 login_manager.init_app(app)
+
 login_manager.login_view = "login"
 
 
 @login_manager.user_loader
 def load_user(user_id):
-    return Admin.query.get(int(user_id))
+
+    return Admin.query.get(
+        int(user_id)
+    )
 
 
 @app.route("/")
 def home():
+
     return redirect("/login")
 
 
-@app.route("/login", methods=["GET", "POST"])
+@app.route(
+    "/login",
+    methods=["GET", "POST"]
+)
 def login():
+
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
 
-        admin = Admin.query.filter_by(username=username).first()
+        username = request.form.get(
+            "username"
+        )
 
-        if admin and check_password_hash(admin.password_hash, password):
+        password = request.form.get(
+            "password"
+        )
+
+        admin = Admin.query.filter_by(
+            username=username
+        ).first()
+
+        if admin and check_password_hash(
+            admin.password_hash,
+            password
+        ):
+
             login_user(admin)
-            return redirect("/dashboard")
 
-        flash("Invalid Login")
+            return redirect(
+                "/dashboard"
+            )
 
-    return render_template("login.html")
+        flash(
+            "Invalid Login"
+        )
+
+    return render_template(
+        "login.html"
+    )
 
 
 @app.route("/logout")
+@login_required
 def logout():
+
     logout_user()
-    return redirect("/login")
+
+    return redirect(
+        "/login"
+    )
 
 
 @app.route("/dashboard")
 @login_required
 def dashboard():
+
     admin = Admin.query.first()
+
     employees = Employee.query.all()
-    
-    # Matches the exact filtering logic your loop expects
-    requests = WithdrawalRequest.query.filter_by(status="PENDING").all()
 
     return render_template(
         "dashboard.html",
         admin=admin,
-        employees=employees,
-        requests=requests
+        employees=employees
     )
 
 
-@app.route("/add-employee", methods=["POST"])
+@app.route(
+    "/add-employee",
+    methods=["POST"]
+)
 @login_required
 def add_employee():
-    name = request.form.get("name")
-    phone = request.form.get("phone")
 
-    # Creates employee with a base balance of 0
-    employee = Employee(name=name, phone=phone, balance=0.0)
-
-    db.session.add(employee)
-    db.session.commit()
-
-    flash("Employee Added")
-    return redirect("/dashboard")
-
-
-@app.route("/refill", methods=["POST"])
-@login_required
-def refill():
-    amount = float(request.form.get("amount"))
-
-    admin = Admin.query.first()
-    admin.balance += amount
-
-    tx = Transaction(
-        tx_type="REFILL",
-        amount=amount,
-        status="SUCCESS",
-        description="Admin Refill"
+    name = request.form.get(
+        "name"
     )
 
-    db.session.add(tx)
+    phone = request.form.get(
+        "phone"
+    )
+
+    employee = Employee(
+        name=name,
+        phone=phone
+    )
+
+    db.session.add(
+        employee
+    )
+
     db.session.commit()
 
-    flash("Balance Refilled")
-    return redirect("/dashboard")
+    flash(
+        "Employee Added Successfully"
+    )
+
+    return redirect(
+        "/dashboard"
+    )
+
 
 @app.route(
     "/pay-salary",
@@ -156,36 +187,43 @@ def pay_salary():
         employee_id
     )
 
-    if amount > admin.balance:
+    if not employee:
 
         flash(
-            "Insufficient System Balance"
+            "Employee Not Found"
         )
 
         return redirect(
             "/dashboard"
         )
 
-    # 1. Trigger the real Africa's Talking payment via your mobile money service
+    if amount > admin.balance:
+
+        flash(
+            "Insufficient Balance"
+        )
+
+        return redirect(
+            "/dashboard"
+        )
+
     success, response = send_money(
         employee.phone,
         amount
     )
 
-    # 2. Only update the database if the Africa's Talking API call succeeded
     if success:
 
         admin.balance -= amount
 
-        # Note: We do not add to employee.balance here because they 
-        # received real cash on their mobile phone instead of virtual app credit.
-
         tx = Transaction(
-            employee_id=employee.id,
+            employee_name=employee.name,
+            phone=employee.phone,
             tx_type="SALARY",
             amount=amount,
             status="SUCCESS",
-            description="Salary Payout via Africa's Talking"
+            reference=str(response),
+            description="Salary Payment"
         )
 
         db.session.add(
@@ -195,92 +233,175 @@ def pay_salary():
         db.session.commit()
 
         flash(
-            "Salary Paid via Africa's Talking"
+            "Salary Sent Successfully"
         )
 
     else:
 
-        # If Africa's Talking fails (e.g. invalid phone number, insufficient API funds)
+        tx = Transaction(
+            employee_name=employee.name,
+            phone=employee.phone,
+            tx_type="SALARY",
+            amount=amount,
+            status="FAILED",
+            reference="FAILED",
+            description=str(response)
+        )
+
+        db.session.add(
+            tx
+        )
+
+        db.session.commit()
+
         flash(
-            f"Payment Failed: {str(response)}"
+            f"Payment Failed: {response}"
         )
 
     return redirect(
         "/dashboard"
     )
 
-@app.route("/approve/<int:req_id>")
+
+@app.route(
+    "/admin-withdraw",
+    methods=["POST"]
+)
 @login_required
-def approve(req_id):
-    withdrawal = WithdrawalRequest.query.get(req_id)
+def admin_withdraw():
 
-    if not withdrawal:
-        flash("Request Not Found")
-        return redirect("/dashboard")
+    amount = float(
+        request.form.get(
+            "amount"
+        )
+    )
 
-    employee = Employee.query.get(withdrawal.employee_id)
     admin = Admin.query.first()
 
-    if withdrawal.amount > employee.balance:
-        flash("Employee Balance Too Low")
-        return redirect("/dashboard")
+    if amount > admin.balance:
 
-    if withdrawal.amount > admin.balance:
-        flash("System Balance Too Low")
-        return redirect("/dashboard")
+        flash(
+            "Insufficient Balance"
+        )
 
-    # Send the real money using Africa's Talking
-    success, response = send_money(employee.phone, withdrawal.amount)
+        return redirect(
+            "/dashboard"
+        )
+
+    admin_phone = os.getenv(
+        "ADMIN_PHONE"
+    )
+
+    success, response = send_money(
+        admin_phone,
+        amount
+    )
 
     if success:
-        employee.balance -= withdrawal.amount
-        admin.balance -= withdrawal.amount
-        withdrawal.status = "APPROVED"
+
+        admin.balance -= amount
 
         tx = Transaction(
-            employee_id=employee.id,
-            tx_type="WITHDRAWAL",
-            amount=withdrawal.amount,
+            employee_name="ADMIN",
+            phone=admin_phone,
+            tx_type="ADMIN_WITHDRAWAL",
+            amount=amount,
             status="SUCCESS",
-            description="USSD Withdrawal"
+            reference=str(response),
+            description="Admin Withdrawal"
         )
 
-        db.session.add(tx)
+        db.session.add(
+            tx
+        )
+
         db.session.commit()
-        flash("Withdrawal Approved")
+
+        flash(
+            "Withdrawal Sent Successfully"
+        )
+
     else:
-        flash(str(response))
 
-    return redirect("/dashboard")
+        flash(
+            f"Withdrawal Failed: {response}"
+        )
+
+    return redirect(
+        "/dashboard"
+    )
 
 
-@app.route("/reject/<int:req_id>")
+@app.route("/history")
 @login_required
-def reject(req_id):
-    withdrawal = WithdrawalRequest.query.get(req_id)
+def history():
 
-    if withdrawal:
-        withdrawal.status = "REJECTED"
-        db.session.commit()
+    transactions = Transaction.query.order_by(
+        Transaction.id.desc()
+    ).all()
 
-    flash("Request Rejected")
-    return redirect("/dashboard")
+    return render_template(
+        "history.html",
+        transactions=transactions
+    )
 
 
-# Create database schemas and seed initial admin credentials on boot
+@app.route(
+    "/payment-callback",
+    methods=["POST"]
+)
+def payment_callback():
+
+    data = request.json
+
+    print(
+        "PAYMENT CALLBACK:",
+        data
+    )
+
+    return "OK", 200
+
+
+@app.route("/health")
+def health():
+
+    return {
+        "status": "running"
+    }
+
+
 with app.app_context():
+
     db.create_all()
 
-    admin = Admin.query.filter_by(username="admin").first()
+    admin = Admin.query.filter_by(
+        username="admin"
+    ).first()
+
     if not admin:
+
         admin = Admin(
             username="admin",
-            password_hash=generate_password_hash("admin123"),
-            balance=400000.0
+            password_hash=generate_password_hash(
+                "admin123"
+            ),
+            phone=os.getenv(
+                "ADMIN_PHONE"
+            ),
+            balance=400000
         )
-        db.session.add(admin)
+
+        db.session.add(
+            admin
+        )
+
         db.session.commit()
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=True
+    )
